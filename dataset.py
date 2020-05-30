@@ -78,7 +78,7 @@ class MyDataset(td.Dataset):
         
         if (self.vid_out=='resnet'):
             tensor_video = torch.from_numpy(rolled_video).type(torch.DoubleTensor)
-            renset_video = resnet18(tensor_video.double()).numpy()
+            renset_video = self.resnet18(tensor_video.double()).numpy()
             renset_video = renset_video.squeeze((2,3))
         
             resnet_video_dim = (video_dim[0],512)

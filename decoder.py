@@ -82,8 +82,7 @@ class CrossModalTDecoderLayer(nn.Module):
         tgt = self.norm2(tgt)
         return tgt
 
-
-class TDecoder(nn.Module):
+class TDecoder_CM(nn.Module):
 
     def __init__(self, emb_size, ntokens, nhead, nhid, nlayers):
         """
@@ -93,7 +92,7 @@ class TDecoder(nn.Module):
         ntokens: vocab size of audio ???
         nlayer: Number of layers in transformer encoder
         """
-        super(TDecoder, self).__init__()
+        super(TDecoder_CM, self).__init__()
         from torch.nn import MultiheadAttention
         otherlayer = nn.TransformerDecoderLayer(emb_size, nhead, nhid)
         self.cmlayer = CrossModalTDecoderLayer(emb_size, nhead, nhid)
@@ -113,4 +112,91 @@ class TDecoder(nn.Module):
         op1 = self.cmlayer.forward(oa, ov)
         output = self.otherlayers(op1, op1)
         output = self.linear_op(output)
+        return output
+    
+class GeneralTDecoderLayer(nn.Module):
+    """
+    Args:
+        d_model: the number of expected features in the input (required).
+        nhead: the number of heads in the multiheadattention models (required).
+        dim_feedforward: the dimension of the feedforward network model (default=2048).
+        dropout: the dropout value (default=0.1).
+        activation: the activation function of intermediate layer, relu or gelu (default=relu).
+    """
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
+        super(GeneralTDecoderLayer, self).__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # Implementation of Feedforward model
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.activation = F.relu
+
+    def forward(self, tgt, memory, src_mask=None, src_key_padding_mask=None):
+        # type: (Tensor, Optional[Tensor], Optional[Tensor]) -> Tensor
+        """Pass the input through the encoder layer.
+
+        Args:
+            src: the sequence to the encoder layer (required).
+            src_mask: the mask for the src sequence (optional).
+            src_key_padding_mask: the mask for the src keys per batch (optional).
+
+        Shape:
+            see the docs in Transformer class.
+        """
+        src2 = self.self_attn(tgt, memory, memory, attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
+        src = tgt + self.dropout1(src2)
+        src = self.norm1(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = src + self.dropout2(src2)
+        src = self.norm2(src)
+        return src
+
+    
+class TDecoder_Gen(nn.Module):
+
+    def __init__(self, emb_size, ntokens, nhead, nhid, nlayers):
+        """
+        emb_size
+        nhead: Number of transformer heads in the encoder
+        nhid: Number of hidden units in transformer encoder layer
+        ntokens: vocab size of audio ???
+        nlayer: Number of layers in transformer encoder
+        """
+        super(TDecoder_Gen, self).__init__()
+        decoderlayer = GeneralTDecoderLayer(emb_size, nhead, nhid)
+        self.oa_layers = _get_clones(decoderlayer, nlayers)
+        self.ov_layers = _get_clones(decoderlayer, nlayers)
+        self.oav_layers = _get_clones(decoderlayer, nlayers)
+
+        self.linear_op = nn.Linear(emb_size, ntokens + 1)  # + 1 for CTC !!!!
+        self.nlayers = nlayers
+        
+    def forward(self, oa, ov):
+        """
+        oa: tensor of shape (204, batch_size, emb_size)
+        ov: tensor of shape (155, batch_size, emb_size)
+        Returns:
+            output: tensor of shape (seq_len, batch_size, emb_size)
+        """
+        oav = oa
+        for num in range(self.nlayers):
+            tempa = self.oa_layers[num].forward(oa, oa)
+            # print(tempa.shape)
+            tempv = self.ov_layers[num].forward(ov, ov)
+            # print(tempv.shape)
+            tempav = self.oav_layers[num].forward(oav, ov)
+            # print(tempav.shape)
+            oa = tempa
+            ov = tempv
+            oav = tempav
+        combined = torch.cat((oa, ov, oav), dim=0)
+        output = self.linear_op(combined)
         return output
