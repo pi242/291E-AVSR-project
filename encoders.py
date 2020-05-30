@@ -30,7 +30,7 @@ class PositionalEncoding(nn.Module):
 
 class AudioTEncoder(nn.Module):
 
-    def __init__(self, ip_size, emb_size, nhead, nhid, nlayers):
+    def __init__(self, ip_size, emb_size, nhead, nhid, nlayers, dropout=0.1):
         """
         ip_size: MFCC features
         emb_size: size after initial embedding using linear layer
@@ -44,36 +44,40 @@ class AudioTEncoder(nn.Module):
         # use linear transformation with layer norm to replace input embedding
         self.linear_in = nn.Linear(ip_size, emb_size)
         self.layer_norm_in = nn.LayerNorm(emb_size)
-        self.dropout = nn.Dropout(p=0.1)
+        self.dropout = nn.Dropout(p=dropout)
         self.pe = PositionalEncoding(emb_size)
 
         encoder_layers = TransformerEncoderLayer(emb_size, nhead, nhid)
         self.trans_encoder = TransformerEncoder(encoder_layers, nlayers)
+
+    def create_padding_mask(self, audio_dims, max_len):
+        """
+        audio_dims = batch_size x 1 tensor
+        max_len = 204
+        """
+        mask = torch.zeros((audio_dims.size(0), max_len), dtype=torch.uint8)
+        for i in range(audio_dims.size(0)):
+            mask[i, audio_dims[i]:] = 1
+        return mask
         
-    def forward(self, src):
+    def forward(self, src, audio_dims):
         """
         src: tensor of shape (seq_len, batch_size, ip_size)
-        
+        audio_dims: (batch_size, 1) tensor
         Returns:
             output: tensor of shape (seq_len, batch_size, emb_size)
-        """
-        
-        """
-        1. Embed the source sequences and add the positional encoding.
-        2. Pass the sequence to the transformer encoder
-        3. Generate and return scores using decoder linear layer
         """
         temp = self.linear_in(src)
         # print(f'temp shape = {temp.shape}')
         encoded = self.layer_norm_in(temp) # seq_len x batch_size x emb_size
         # print(f'encoded shape = {encoded.shape}')
         pos_encoded = self.dropout(encoded + self.pe(encoded)) # seq_len x batch_size x emb_size
-        output = self.trans_encoder(pos_encoded) # seq_len x batch_size x emb_size
+        output = self.trans_encoder(pos_encoded, src_key_padding_mask=self.create_padding_mask(audio_dims, src.size(0))) # seq_len x batch_size x emb_size
         return output
 
 class VideoTEncoder(nn.Module):
 
-    def __init__(self, ip_size, emb_size, nhead, nhid, nlayers):
+    def __init__(self, ip_size, emb_size, nhead, nhid, nlayers, dropout=0.1):
         """
         ip_size: MFCC features
         emb_size: size after initial embedding using linear layer
@@ -87,27 +91,32 @@ class VideoTEncoder(nn.Module):
         # use linear transformation with layer norm to replace input embedding
         self.linear_in = nn.Linear(ip_size, emb_size)
         self.layer_norm_in = nn.LayerNorm(emb_size)
-        self.dropout = nn.Dropout(p=0.1)
+        self.dropout = nn.Dropout(p=dropout)
         self.pe = PositionalEncoding(emb_size)
 
         encoder_layers = TransformerEncoderLayer(emb_size, nhead, nhid)
         self.trans_encoder = TransformerEncoder(encoder_layers, nlayers)
+
+    def create_padding_mask(self, video_dims, max_len):
+        """
+        audio_dims = batch_size x 1 tensor
+        max_len = 512
+        """
+        mask = torch.zeros((video_dims.size(0), max_len), dtype=torch.uint8)
+        for i in range(video_dims.size(0)):
+            mask[i, video_dims[i]:] = 1
+        return mask
         
-    def forward(self, src):
+    def forward(self, src, video_dims):
         """
         src: tensor of shape (seq_len, batch_size, ip_size)
-        
+        video_dims: (batch_size, 1) tensor
         Returns:
             output: tensor of shape (seq_len, batch_size, emb_size)
         """
         
-        """
-        1. Embed the source sequences and add the positional encoding.
-        2. Pass the sequence to the transformer encoder
-        3. Generate and return scores using decoder linear layer
-        """
         temp = self.linear_in(src)
         encoded = self.layer_norm_in(temp) # seq_len x batch_size x emb_size
         pos_encoded = self.dropout(encoded + self.pe(encoded)) # seq_len x batch_size x emb_size
-        output = self.trans_encoder(pos_encoded) # seq_len x batch_size x emb_size
+        output = self.trans_encoder(pos_encoded, src_key_padding_mask=self.create_padding_mask(video_dims, src.size(0))) # seq_len x batch_size x emb_size
         return output
